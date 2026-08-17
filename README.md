@@ -1,0 +1,62 @@
+# 科技内参 (Tech Insider Report)
+
+面向投资人士的**科技赛道实时资讯与行情分析**工具。不做大而全，只聚焦 8 个硬科技赛道：
+
+半导体芯片 · 半导体设备 · GPU 芯片 · 存储芯片 · 光通信 · 机器人 · AI 大模型 · AI 应用
+
+## 核心功能
+
+- **实时资讯流**：A 股 + 海外双语资讯（自动翻译），按赛道/地区/人物多维度筛选
+- **全球科技市场**：美股核心标的行情面板（红涨绿跌），覆盖全部 8 赛道
+- **交易温度计**：-1 ~ +1 实时交易活跃度，板块排行榜实时滚动
+- **人物表态**：马斯克、特朗普、奥特曼、黄仁勋等 9 位关键人物的言论聚合
+- **内容去重**：同一事件当天多源转发/同政策拆条自动合并，只保留信息最完整的一条
+- **指数走势**：大盘与科技指数分时迷你走势图、资金流向热力图
+
+## 数据源
+
+| 类别 | 来源 |
+|---|---|
+| 国内行情/快讯 | 东方财富、新浪美股、华尔街见闻 |
+| 海外资讯 | 三星 / SK海力士 / OpenAI / 英伟达 / AMD 官方 RSS + CNBC |
+| 翻译 | MyMemory API（本地缓存持久化，含专有名词保护） |
+
+## 技术栈
+
+- **后端**：Python 3 标准库实现（零第三方依赖），TTL 缓存防阻塞 + 后台线程预热
+- **前端**：原生 HTML/CSS/JS，无框架，秒开
+- **部署**：systemd 守护 + Nginx 反代，支持 Git 一键更新
+
+## 快速开始（本地）
+
+```bash
+python3 server.py 8080
+# 浏览器打开 http://127.0.0.1:8080
+```
+
+## 部署到腾讯云
+
+```bash
+sudo GIT_REPO=https://github.com/silentK-AI/Tech-Insider-Report.git bash deploy/install.sh
+```
+
+更新版本：
+
+```bash
+sudo bash deploy/update.sh   # git pull + 重启 + 自检
+```
+
+完整部署指南见 [`deploy/README.md`](deploy/README.md)。
+
+## 目录结构
+
+```
+server.py            # 后端代理服务器（行情/资讯/翻译/去重）
+index.html           # 前端单页应用
+deploy/              # 部署脚本与配置
+  install.sh         # 一键部署
+  update.sh          # 一键更新
+  tech-neican.service# systemd 守护模板
+  nginx.conf.example # Nginx 反代配置示例
+  README.md          # 部署文档
+```
