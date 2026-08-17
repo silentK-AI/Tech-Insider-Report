@@ -21,7 +21,16 @@ fi
 
 echo "==> [1/3] 拉取最新代码"
 cd "$APP_DIR"
-sudo -u www-data git pull --ff-only
+# 自动识别运行用户 (与 install.sh 一致)
+RUN_USER=""
+if id www-data >/dev/null 2>&1; then
+    RUN_USER=www-data
+elif id nginx >/dev/null 2>&1; then
+    RUN_USER=nginx
+else
+    RUN_USER=root
+fi
+sudo -u "$RUN_USER" git pull --ff-only
 
 echo "==> [2/3] 重启服务"
 sudo systemctl restart tech-neican
