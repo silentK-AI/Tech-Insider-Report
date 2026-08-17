@@ -19,20 +19,31 @@ set -e
 APP_DIR=/opt/tech-neican
 PORT=${PORT:-8080}
 SRC=/tmp/tech-neican
+# 可选: 设置 GIT_REPO 后改用 git 方式部署 (推荐, 便于后续 git pull 更新)
+#   例: GIT_REPO=https://gitee.com/yourname/tech-neican.git sudo bash install.sh
+GIT_REPO=${GIT_REPO:-}
 
-echo "==> [1/5] 安装系统依赖 (python3 / nginx)"
+echo "==> [1/5] 安装系统依赖 (python3 / nginx / git)"
 sudo apt-get update -y
-sudo apt-get install -y python3 nginx curl
+sudo apt-get install -y python3 nginx git curl
 
 echo "==> [2/5] 部署代码到 $APP_DIR"
 sudo mkdir -p "$APP_DIR"
-# 支持两种来源: /tmp/tech-neican/ 目录 或 /tmp/ 下的散文件
-if [ -d "$SRC" ]; then
+if [ -n "$GIT_REPO" ]; then
+    # Git 方式: 直接克隆仓库 (仓库需含 server.py / index.html)
+    if [ -d "$APP_DIR/.git" ]; then
+        echo "   已存在 git 仓库, 执行 git pull"
+        sudo -u www-data git -C "$APP_DIR" pull --ff-only
+    else
+        sudo git clone "$GIT_REPO" "$APP_DIR"
+    fi
+elif [ -d "$SRC" ]; then
     sudo cp -r "$SRC"/. "$APP_DIR"/
 elif [ -f /tmp/server.py ] && [ -f /tmp/index.html ]; then
     sudo cp /tmp/server.py /tmp/index.html "$APP_DIR"/
 else
-    echo "!! 未找到代码文件。请先上传 server.py / index.html 到 /tmp/ 或 /tmp/tech-neican/"
+    echo "!! 未找到代码文件。请先上传 server.py / index.html 到 /tmp/ 或 /tmp/tech-neican/,"
+    echo "   或设置 GIT_REPO 用 git 方式部署"
     exit 1
 fi
 sudo chown -R www-data:www-data "$APP_DIR"

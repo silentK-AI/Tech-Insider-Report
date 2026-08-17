@@ -34,6 +34,8 @@
 
 ## 三、上传代码
 
+> 💡 **推荐用 Git 方式部署**（文末《九、Git 版本管理》），以后每次更新只需服务器上 `git pull`，不用再 scp。以下 scp 方式适合只想快速跑起来的情况。
+
 在**你本地电脑**执行（把 `<IP>` 换成服务器公网 IP）：
 
 ```bash
@@ -75,7 +77,7 @@ sudo systemctl restart tech-neican  # 重启服务
 sudo systemctl stop tech-neican     # 停止
 ```
 
-更新版本：重新 `scp` 新代码到服务器 → `sudo cp` 覆盖 `/opt/tech-neican/` → `sudo systemctl restart tech-neican`。
+更新版本：本地 `git commit + push` → 服务器 `sudo bash /opt/tech-neican/deploy/update.sh`（git 方式）；或重新 `scp` 覆盖后 `sudo systemctl restart tech-neican`（非 git 方式）。
 
 ---
 
@@ -114,3 +116,72 @@ sudo systemctl stop tech-neican     # 停止
 - 东方财富行情/快讯、新浪美股行情、华尔街见闻 API（国内）
 - 三星/SK海力士/OpenAI/英伟达/AMD 官方 RSS + CNBC（海外，国内直连可用）
 - MyMemory 免费翻译 API（翻译缓存持久化，配额友好）
+
+---
+
+## 九、Git 版本管理（推荐）
+
+本地代码已初始化为 git 仓库并完成首次提交（`.trans_cache.json`、`.workbuddy/` 等运行时文件已用 `.gitignore` 排除）。后续更新链路：**本地 commit+push → 服务器 git pull → 重启**，全程不用再传文件，还自带版本历史与回滚。
+
+### 1. 推送代码到远端（只需一次）
+
+在 Gitee（国内快，推荐）或 GitHub 新建一个**空仓库**（不要勾选初始化 README），然后本地执行：
+
+```bash
+cd /Users/jiangpei/WorkBuddy/科技内参
+
+# Gitee 示例 (在 Gitee 网站创建空仓库后拿到地址)
+git remote add origin https://gitee.com/你的用户名/tech-neican.git
+git push -u origin main
+
+# GitHub 示例
+# git remote add origin https://github.com/你的用户名/tech-neican.git
+# git push -u origin main
+```
+
+> 首次 push 会要求输入平台账号密码/令牌。Gitee 用账号密码即可；GitHub 现在需要用 **Personal Access Token**（Settings → Developer settings → Tokens）。
+
+### 2. 服务器用 git 方式部署（一次性）
+
+```bash
+sudo bash /tmp/install.sh    # 改成先执行这个, 但上传时多传一个步骤也行
+```
+
+更直接的做法——SSH 登录服务器，用 git 部署（`install.sh` 已支持）：
+
+```bash
+# 上传脚本后, 带 GIT_REPO 执行
+sudo GIT_REPO=https://gitee.com/你的用户名/tech-neican.git bash /tmp/install.sh
+```
+
+脚本检测到 `GIT_REPO` 就会 `git clone` 到 `/opt/tech-neican`（自动跳过 `.trans_cache.json` 等运行时文件），其余（systemd + Nginx）与 scp 方式完全一致。
+
+### 3. 日常更新（以后每次改版只需 3 步）
+
+```bash
+# ① 本地改完代码后
+cd /Users/jiangpei/WorkBuddy/科技内参
+git add -A && git commit -m "本次改动说明"
+git push
+
+# ② SSH 登录服务器, 一条命令完成更新
+sudo bash /opt/tech-neican/deploy/update.sh
+```
+
+`update.sh` 自动执行：`git pull`（拉新代码）→ `systemctl restart`（重启服务）→ 本机自检。要回滚旧版本：
+
+```bash
+cd /opt/tech-neican && sudo -u www-data git log --oneline -5   # 看历史版本
+sudo -u www-data git checkout <版本号> -- server.py index.html # 回滚指定版本
+sudo systemctl restart tech-neican
+```
+
+### 4. 两种方式对比
+
+| | scp 直传 | **Git 管理** ⭐ |
+|---|---|---|
+| 首次部署 | 传 2 个文件 | `GIT_REPO=... install.sh` |
+| 日常更新 | 重新 scp + 覆盖 + 重启 | `update.sh` 一条命令 |
+| 版本历史/回滚 | ❌ 无 | ✅ `git log` + `checkout` |
+| 误改恢复 | ❌ 无 | ✅ 一键还原 |
+| 多设备协作 | ❌ 麻烦 | ✅ 随处 clone |
