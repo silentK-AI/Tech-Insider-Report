@@ -180,8 +180,88 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
   .main{grid-template-columns:280px 1fr 300px}
 }
 @media(max-width:900px){
-  .main{grid-template-columns:1fr;gap:8px}
+  .main{grid-template-columns:1fr;gap:10px;padding:10px}
   .news-feed{height:auto;min-height:400px}
+  .header{gap:12px;padding:0 12px}
+  .panel-header{padding:9px 12px}
+  .panel-body{padding:10px 12px}
+  .news-regions{padding:8px 10px 0}
+  .news-people{padding:6px 10px 0}
+  .news-filters{padding:8px 10px}
+  .news-item{padding:9px 12px}
+  /* 弹窗不溢出屏幕 */
+  .modal{width:92vw;max-width:560px}
+  .stock-row{grid-template-columns:1fr auto auto auto;gap:6px}
+  .stock-flow{grid-column:2/-1;text-align:left;min-width:0}
+  .stock-cap{min-width:46px}
+  .stock-change{min-width:46px}
+}
+@media(max-width:600px){
+  *{-webkit-tap-highlight-color:transparent}
+  .news-list,.modal{-webkit-overflow-scrolling:touch}
+  /* Header 紧凑 */
+  .header{height:44px;padding:0 8px;gap:8px}
+  .logo{gap:6px}
+  .logo-icon{width:24px;height:24px;font-size:12px;border-radius:5px}
+  .logo-text{font-size:14px}
+  .logo-sub{display:none}
+  .data-src{display:none}
+  .ticker-wrap{height:44px}
+  .ticker-item{font-size:11px;padding:0 12px}
+  .header-time{font-size:11px;gap:4px}
+  .live-dot{width:5px;height:5px}
+  /* 主布局 */
+  .main{padding:8px;gap:8px}
+  .panel{border-radius:6px}
+  .panel-header{padding:8px 10px}
+  .panel-title{font-size:12px}
+  .panel-action{font-size:10px}
+  .panel-body{padding:8px 10px}
+  /* 温度计 */
+  .thermo-main{padding:12px 0 6px}
+  .thermo-value{font-size:34px}
+  .thermo-gauge{height:20px}
+  .thermo-pointer{height:28px;top:-4px}
+  .thermo-formula{font-size:9px;margin-top:6px;padding:5px}
+  .thermo-sub-name{width:62px;font-size:10px}
+  /* 筛选 chips 加大触控区域 */
+  .news-region-label,.news-people-label{display:none}
+  .news-filter{padding:5px 11px;font-size:11px}
+  .news-regions{padding:7px 10px 0}
+  .news-people{padding:5px 10px 0}
+  .news-filters{padding:7px 10px}
+  /* 资讯条目 */
+  .news-item{padding:9px 10px}
+  .news-digest{font-size:11px;margin-top:4px;padding-left:6px}
+  .news-meta{gap:6px}
+  /* 排行 */
+  .rank-item{padding:8px 10px;gap:6px;grid-template-columns:22px 1fr auto auto}
+  .rank-change{min-width:46px;font-size:11px}
+  .rank-meta{min-width:42px;font-size:9px}
+  /* 指数 */
+  .idx-grid{gap:6px}
+  .idx-card{padding:8px}
+  .idx-value{font-size:15px}
+  .idx-spark{height:24px}
+  /* 全球市场 */
+  .us-card{padding:7px 8px}
+  /* 热力图 */
+  .heatmap{padding:8px;gap:6px}
+  .heat-cell{padding:8px 6px}
+  .heat-name{font-size:10px}
+  .heat-val{font-size:14px}
+  .heat-flow{font-size:9px}
+  /* 弹窗近全屏 */
+  .modal{width:calc(100vw - 16px);max-height:88vh;border-radius:10px}
+  .modal-header{padding:12px 14px}
+  .modal-title{font-size:14px}
+  .modal-body{padding:12px 14px}
+  .stock-row{font-size:11px;gap:5px;padding:7px 0}
+  .stock-price{min-width:46px}
+  .stock-change{min-width:42px}
+  .stock-cap{min-width:42px}
+  .stock-flow{font-size:10px}
+  .loading{font-size:11px;padding:20px 8px}
 }
 </style>
 </head>
