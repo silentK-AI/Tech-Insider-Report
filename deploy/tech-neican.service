@@ -1,0 +1,23 @@
+# 科技内参 - systemd 服务单元 (由 install.sh 自动生成, 此文件为模板参考)
+# 手动安装:
+#   sudo cp tech-neican.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tech-neican
+
+[Unit]
+Description=Tech Neican (科技内参) Market Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/tech-neican
+ExecStart=/usr/bin/python3 /opt/tech-neican/server.py 8080
+Restart=always
+RestartSec=3
+# 如需不经 Nginx 直接对外访问, 取消下行注释 (并放行 8080 端口)
+# Environment=HOST=0.0.0.0
+
+[Install]
+WantedBy=multi-user.target
