@@ -15,11 +15,16 @@
 #
 # 说明: 自动识别包管理器(apt/yum/dnf)与运行用户(www-data/nginx),
 #       systemd 守护进程, 端口默认 8080 (可用 PORT 环境变量覆盖)
+#       监听地址默认 127.0.0.1 (Nginx 反代场景);
+#       如需独立端口直连外网, 用 BIND_HOST=0.0.0.0 (并放行对应端口)
+#       如 80 端口已被其他站点占用/无需 Nginx, 用 SKIP_NGINX=1 跳过反代配置
 # ============================================================
 set -e
 
 APP_DIR=/opt/tech-neican
 PORT=${PORT:-8080}
+BIND_HOST=${BIND_HOST:-127.0.0.1}
+SKIP_NGINX=${SKIP_NGINX:-0}
 SRC=/tmp/tech-neican
 GIT_REPO=${GIT_REPO:-}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -96,8 +101,8 @@ WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/python3 $APP_DIR/server.py $PORT
 Restart=always
 RestartSec=3
-# 如需不经 Nginx 直接对外访问, 取消下行注释 (并放行 $PORT 端口)
-# Environment=HOST=0.0.0.0
+# 监听地址: 默认 127.0.0.1 (Nginx 反代); 独立端口直连时 BIND_HOST=0.0.0.0
+Environment=HOST=$BIND_HOST
 
 [Install]
 WantedBy=multi-user.target
@@ -113,9 +118,13 @@ curl -s -o /dev/null -w "  GET /api/overview    -> HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "  GET /                -> HTTP %{http_code}\n" \
      --max-time 10 "http://127.0.0.1:$PORT/" || true
 
-echo "==> [5/5] 配置 Nginx 反向代理 (HTTP)"
-sudo mkdir -p /etc/nginx/conf.d
-sudo tee /etc/nginx/conf.d/tech-neican.conf > /dev/null <<EOF
+if [ "$SKIP_NGINX" = "1" ]; then
+    echo "==> [5/5] 跳过 Nginx 反代配置 (SKIP_NGINX=1)"
+    echo "   直接访问: http://<服务器IP>:$PORT/  (请放行 $PORT 端口)"
+else
+    echo "==> [5/5] 配置 Nginx 反向代理 (HTTP)"
+    sudo mkdir -p /etc/nginx/conf.d
+    sudo tee /etc/nginx/conf.d/tech-neican.conf > /dev/null <<EOF
 server {
     listen 80;
     server_name _;   # 有域名后改成你的域名, 如 tech.example.com
@@ -133,13 +142,14 @@ server {
     }
 }
 EOF
-# 部分发行版(如 OpenCloudOS) 主配置可能未 include conf.d, 检测并提示
-if ! grep -qE "conf\.d/.*\.conf" /etc/nginx/nginx.conf 2>/dev/null; then
-    echo "!! 警告: /etc/nginx/nginx.conf 未 include conf.d/*.conf"
-    echo "   请将 /etc/nginx/conf.d/tech-neican.conf 的内容合并进 nginx.conf 的 http{} 块"
-    echo "   然后: nginx -t && systemctl reload nginx"
-else
-    sudo nginx -t && sudo systemctl reload nginx || echo "!! Nginx 配置失败, 请手动检查 nginx -t 输出"
+    # 部分发行版(如 OpenCloudOS) 主配置可能未 include conf.d, 检测并提示
+    if ! grep -qE "conf\.d/.*\.conf" /etc/nginx/nginx.conf 2>/dev/null; then
+        echo "!! 警告: /etc/nginx/nginx.conf 未 include conf.d/*.conf"
+        echo "   请将 /etc/nginx/conf.d/tech-neican.conf 的内容合并进 nginx.conf 的 http{} 块"
+        echo "   然后: nginx -t && systemctl reload nginx"
+    else
+        sudo nginx -t && sudo systemctl reload nginx || echo "!! Nginx 配置失败, 请手动检查 nginx -t 输出"
+    fi
 fi
 
 echo
@@ -148,7 +158,11 @@ echo "✅ 部署完成"
 echo "  服务状态 : systemctl status tech-neican"
 echo "  实时日志 : journalctl -u tech-neican -f"
 echo "  本机验证 : curl http://127.0.0.1:$PORT/api/overview"
-echo "  对外访问 : http://<服务器公网IP>/   (80端口, 需云防火墙放行)"
+if [ "$SKIP_NGINX" = "1" ]; then
+    echo "  对外访问 : http://<服务器公网IP>:$PORT/  (需云安全组/防火墙放行 $PORT 端口)"
+else
+    echo "  对外访问 : http://<服务器公网IP>/   (80端口, 需云防火墙放行)"
+fi
 echo "  重启服务 : sudo systemctl restart tech-neican"
 echo "  更新代码 : sudo bash $APP_DIR/deploy/update.sh"
 echo "======================================================"
