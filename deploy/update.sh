@@ -39,4 +39,4 @@ echo "==> [3/3] 自检"
 sleep 2
 curl -s -o /dev/null -w "  GET /api/overview -> HTTP %{http_code}\n" \
      --max-time 10 "http://127.0.0.1:8080/api/overview" || true
-echo "✅ 更新完成 (当前版本: $(cd "$APP_DIR" && git log --oneline -1))"
+echo "✅ 更新完成 (当前版本: $(cd "$APP_DIR" && git -c safe.directory='*' log --oneline -1))"
