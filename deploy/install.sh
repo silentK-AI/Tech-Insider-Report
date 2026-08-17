@@ -23,6 +23,11 @@ PORT=${PORT:-8080}
 SRC=/tmp/tech-neican
 GIT_REPO=${GIT_REPO:-}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 仓库根目录: 在 deploy/ 下执行时取其上级 (server.py / index.html 在仓库根)
+REPO_DIR="$SCRIPT_DIR"
+if [ "$(basename "$SCRIPT_DIR")" = "deploy" ]; then
+    REPO_DIR="$(dirname "$SCRIPT_DIR")"
+fi
 
 echo "==> [1/5] 安装系统依赖 (python3 / nginx / git / curl)"
 # 自动识别包管理器
@@ -62,12 +67,11 @@ if [ -n "$GIT_REPO" ]; then
     fi
 elif [ -d "$SRC" ]; then
     sudo cp -r "$SRC"/. "$APP_DIR"/
-elif [ -f "$SCRIPT_DIR/server.py" ] && [ -f "$SCRIPT_DIR/index.html" ]; then
+elif [ -f "$REPO_DIR/server.py" ] && [ -f "$REPO_DIR/index.html" ]; then
     # 场景 A: 已在 clone 的仓库里执行 deploy/install.sh
-    echo "   从仓库目录 $SCRIPT_DIR 部署"
-    sudo cp "$SCRIPT_DIR/server.py" "$SCRIPT_DIR/index.html" "$APP_DIR"/
-    sudo mkdir -p "$APP_DIR/deploy"
-    sudo cp -r "$SCRIPT_DIR/deploy"/. "$APP_DIR/deploy"/ 2>/dev/null || true
+    # 整个仓库(含 .git)拷贝, 保证 /opt/tech-neican 是 git 仓库, 后续可用 update.sh
+    echo "   从仓库目录 $REPO_DIR 部署 (含 .git, 支持 git 更新)"
+    sudo cp -r "$REPO_DIR"/. "$APP_DIR"/
 elif [ -f /tmp/server.py ] && [ -f /tmp/index.html ]; then
     sudo cp /tmp/server.py /tmp/index.html "$APP_DIR"/
 else
