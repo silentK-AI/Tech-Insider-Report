@@ -677,7 +677,7 @@ function renderNews() {
     const hasBody = content && content !== (n.title || '').trim();
     const isGlobal = n.region === 'global';
     const researchBadge = n.research ? '<span class="news-research">📊 研报</span>' : '';
-    const srcBadge = isGlobal ? `<span class="news-source">🌍 ${esc(n.source || '海外')}</span>` : '';
+    const srcBadge = n.source ? `<span class="news-source">${isGlobal ? '🌍 ' : ''}${esc(n.source)}</span>` : '';
     // 人物表态徽标: 如 "👤 马斯克"
     const personBadge = (n.people || []).length
       ? `<span class="news-person">👤 ${esc((n.people || []).map(pid => {

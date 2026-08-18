@@ -16,6 +16,7 @@
   GET /api/people    -> 重要人物表态动态 (马斯克/特朗普/OpenAI等掌门人)
 """
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -377,12 +378,14 @@ def _clean_content(summary, digest, title):
 
 
 def fetch_news(page_size=100):
+    """国内资讯聚合: 东方财富 + 财联社 + 同花顺 + 新浪财经 7x24。
+    各源条目统一入 NEWS_POOL (按 id 去重), 输出按时间倒序"""
     url = ("https://np-weblist.eastmoney.com/comm/web/getFastNewsList?"
            "client=web&biz=web_724&fastColumn=102&sortEnd=&pageSize={}"
            "&req_trace=".format(page_size))
+    items = []
     try:
         data = json.loads(http_get(url, referer="https://www.eastmoney.com/"))
-        items = []
         for n in (data.get("data") or {}).get("fastNewsList") or []:
             title = n.get("title") or ""
             summary = n.get("summary") or ""
@@ -406,22 +409,119 @@ def fetch_news(page_size=100):
                 "people": match_people(_clean_title(title), summary or ""),
                 "impact": classify_impact(text),
                 "importance": classify_importance(text),
+                "source": "东方财富",
             })
-        # 合并到全局池, 按时间倒序
-        with NEWS_POOL_LOCK:
-            for it in items:
-                if it["id"] and it["id"] not in NEWS_POOL:
-                    NEWS_POOL[it["id"]] = it
-            pool = sorted(NEWS_POOL.values(), key=lambda x: x["fullTime"], reverse=True)
-            if len(pool) > 500:
-                for old in pool[500:]:
-                    NEWS_POOL.pop(old["id"], None)
-                pool = pool[:500]
-        return pool
     except Exception as e:
         print("[news] err:", e)
-        with NEWS_POOL_LOCK:
-            return sorted(NEWS_POOL.values(), key=lambda x: x["fullTime"], reverse=True)
+    # 聚合其他国内源 (各自容错, 单源故障不影响整体)
+    items.extend(fetch_cls())
+    items.extend(fetch_ths())
+    items.extend(fetch_sina_live())
+    # 合并到全局池, 按时间倒序
+    with NEWS_POOL_LOCK:
+        for it in items:
+            if it["id"] and it["id"] not in NEWS_POOL:
+                NEWS_POOL[it["id"]] = it
+        pool = sorted(NEWS_POOL.values(), key=lambda x: x["fullTime"], reverse=True)
+        if len(pool) > 500:
+            for old in pool[500:]:
+                NEWS_POOL.pop(old["id"], None)
+            pool = pool[:500]
+    return pool
+
+
+def fetch_cls():
+    """财联社电报 7x24 (A 股公告/产业快讯, 质量高)。
+    接口需签名: sign = md5(sha1(sorted_query_params)), 翻页用 last_time=上一页末条 ctime。
+    拉 2 页 x 50 条覆盖更长窗口"""
+    items = []
+    last_time = ""
+    for _page in range(2):
+        params = ("app=CailianpressWeb&category=&last_time={}&os=web"
+                  "&refresh_type=1&rn=50&sv=7.7.5".format(last_time))
+        sign = hashlib.md5(hashlib.sha1(params.encode()).hexdigest().encode()).hexdigest()
+        url = "https://www.cls.cn/v1/roll/get_roll_list?" + params + "&sign=" + sign
+        try:
+            data = json.loads(http_get(url, referer="https://www.cls.cn/telegraph"))
+            roll = (data.get("data") or {}).get("roll_data") or []
+            if not roll:
+                break
+            for it in roll:
+                title = _clean_title(it.get("title") or "")
+                content = re.sub(r"<[^>]+>", "", it.get("content") or it.get("brief") or "").strip()
+                ts = it.get("ctime") or 0
+                if not title or not ts:
+                    continue
+                full = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+                nid = "cls:" + str(it.get("id") or "")
+                item = _build_item(nid, full, title, content or title,
+                                   it.get("shareurl") or "", "财联社", region="cn")
+                if item:
+                    items.append(item)
+            last_time = str(roll[-1].get("ctime") or "")
+            if not last_time:
+                break
+        except Exception as e:
+            print("[cls] err:", e)
+            break
+    return items
+
+
+def fetch_ths():
+    """同花顺 7x24 快讯 (A股/港美股科技滚动)"""
+    items = []
+    url = ("https://news.10jqka.com.cn/tapp/news/push/stock/"
+           "?page=1&tag=&track=website&pagesize=50")
+    try:
+        data = json.loads(http_get(url, referer="https://news.10jqka.com.cn/"))
+        for it in (data.get("data") or {}).get("list") or []:
+            title = _clean_title(it.get("title") or "")
+            digest = (it.get("digest") or "").strip()
+            try:
+                ts = int(it.get("ctime") or 0)
+            except (TypeError, ValueError):
+                ts = 0
+            if not title or not ts:
+                continue
+            full = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            nid = "ths:" + str(it.get("id") or "")
+            item = _build_item(nid, full, title, digest or title,
+                               it.get("url") or "", "同花顺", region="cn")
+            if item:
+                items.append(item)
+    except Exception as e:
+        print("[ths] err:", e)
+    return items
+
+
+def fetch_sina_live():
+    """新浪财经 7x24 全球快讯直播 (zhibo_id=152)。
+    rich_text 为【标题】正文 格式, 提取【】内为标题"""
+    items = []
+    url = ("https://zhibo.sina.com.cn/api/zhibo/feed?page=1&page_size=100"
+           "&zhibo_id=152&tag_id=0&dire=f&dpc=1")
+    try:
+        data = json.loads(http_get(url, referer="https://finance.sina.com.cn/"))
+        feed = (((data.get("result") or {}).get("data") or {})
+                .get("feed") or {}).get("list") or []
+        for it in feed:
+            text = re.sub(r"<[^>]+>", "", it.get("rich_text") or "").strip()
+            full = (it.get("create_time") or "").strip()
+            if not text or not full:
+                continue
+            m = re.match(r"^【([^】]{4,40})】(.*)$", text, re.S)
+            if m:
+                title, content = _clean_title(m.group(1)), m.group(2).strip()
+            else:
+                title, content = _clean_title(text[:60]), text
+            nid = "sina:" + str(it.get("id") or "")
+            item = _build_item(nid, full, title, content or title,
+                               it.get("docurl") or "", "新浪财经", region="cn")
+            if item:
+                items.append(item)
+    except Exception as e:
+        print("[sina] err:", e)
+    return items
 
 
 # ============ 英文资讯翻译 ============
@@ -791,6 +891,38 @@ _DUP_COMB_BODY = 0.50    # 通道5: 组合判定 - 正文相似度下限
 _DUP_PREFIX = 6          # 通道2: 标题判重的前缀门槛
 _DUP_NOISE = ("快讯", "突发", "最新", "独家", "刚刚", "早报", "晚报", "盘中")
 
+# 通道6: 财报主体判重 —— 同一公司同一天的财报新闻, 各源标题角度不同
+# (营收版/净利版/增速版, 标题相似度仅 0.3~0.5, 文本相似通道抓不住), 用
+# "主体名(：前) + 财报关键词" 判重
+_EARNINGS_WORDS = ("半年报", "半年度", "上半年", "三季报", "三季度", "三季度报",
+                   "年报", "年度报告", "季报", "季度报告", "一季报", "财报",
+                   "业绩", "净利润", "营收", "营业收入", "营业总收入")
+# 非公司主体 (监管/政府机构名): 其财报词新闻可能是不同事件, 不做主体判重
+_SUBJECT_BLACKLIST = ("证监会", "央行", "中国人民银行", "国务院", "财政部", "工信部",
+                      "工业和信息化部", "发改委", "发展改革委", "商务部", "国资委",
+                      "国家统计局", "统计局", "上交所", "深交所", "北交所", "港交所",
+                      "交易所", "财政部们", "工信部等", "中注协", "银保监会", "金融监管总局")
+
+
+def _earnings_subject(title):
+    """财报类新闻的主体名。两种提取方式:
+    1) '天孚通信：上半年净利润...' -> '：'前的公司名
+    2) '天孚通信发布2026年半年度报告...' -> '发布/公布/披露'前的公司名
+    非财报标题或主体可疑(监管机构/超长)返回 None"""
+    t = (title or "").strip()
+    if "：" in t:
+        subj = t.split("：", 1)[0].strip()
+    else:
+        m = re.match(r"^(.{3,14}?)(?:发布|公布|披露)", t)
+        if not m:
+            return None
+        subj = m.group(1).strip()
+    if not (3 <= len(subj) <= 14):
+        return None
+    if subj in _SUBJECT_BLACKLIST:
+        return None
+    return subj if any(w in t for w in _EARNINGS_WORDS) else None
+
 
 def _norm_title(t):
     """归一化标题: 小写、去噪音词、去标点空白, 保留中英文与数字"""
@@ -862,7 +994,7 @@ def dedupe_items(items):
         lst.sort(key=lambda x: (len(x.get("content") or ""),
                                 bool(x.get("link")),
                                 x.get("fullTime") or ""), reverse=True)
-        kept, kept_meta = [], []
+        kept, kept_meta, kept_subj = [], [], set()
         for it in lst:
             body = it.get("content") or ""
             na = _norm_title(it.get("title"))
@@ -870,14 +1002,21 @@ def dedupe_items(items):
                 b30a, b100a = _norm_body(body, 30), _norm_body(body, 100)
             else:
                 b30a = b100a = ""
+            subj = _earnings_subject(it.get("title"))
             dup = False
-            for nb, b30b, b100b in kept_meta:
-                if _dup_match(na, b30a, b100a, nb, b30b, b100b):
-                    dup = True
-                    break
+            # 通道6: 同日同主体财报新闻 (各源标题角度不同, 文本通道抓不住)
+            if subj and subj in kept_subj:
+                dup = True
+            if not dup:
+                for nb, b30b, b100b in kept_meta:
+                    if _dup_match(na, b30a, b100a, nb, b30b, b100b):
+                        dup = True
+                        break
             if not dup:
                 kept.append(it)
                 kept_meta.append((na, b30a, b100a))
+                if subj:
+                    kept_subj.add(subj)
         out.extend(kept)
     return sorted(out, key=lambda x: x["fullTime"], reverse=True)
 
