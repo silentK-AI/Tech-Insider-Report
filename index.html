@@ -98,12 +98,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
 .news-title-en{font-size:11px;line-height:1.5;color:var(--text-3);margin-top:3px;font-family:var(--mono);word-break:break-word}
 /* 中文摘要要点 (海外资讯消化核心信息) */
 .news-digest{font-size:12px;line-height:1.65;color:var(--text-2);margin-top:5px;padding-left:8px;border-left:2px solid var(--border-hover);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-/* 人物表态 */
-.news-people{display:flex;gap:4px;padding:6px 14px 0;flex-wrap:wrap;align-items:center}
-.news-people-label{font-size:10px;color:var(--text-3);margin-right:2px}
-.news-filter.person-active{background:var(--purple);color:#fff}
+/* 人物表态徽标 (人名即来源备注, 不单独设人物板块) */
 .news-person{font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(250,173,20,.1);color:#faad14;border:1px solid rgba(250,173,20,.25);white-space:nowrap}
-.news-person-cnt{font-size:9px;opacity:.7;font-family:var(--mono)}
 .news-importance{font-size:10px;padding:1px 5px;border-radius:3px;font-weight:500}
 .news-expand-hint{font-size:10px;color:var(--text-3);margin-left:auto;transition:color .2s;flex-shrink:0}
 .news-item:hover .news-expand-hint{color:var(--blue)}
@@ -186,7 +182,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
   .panel-header{padding:9px 12px}
   .panel-body{padding:10px 12px}
   .news-regions{padding:8px 10px 0}
-  .news-people{padding:6px 10px 0}
   .news-filters{padding:8px 10px}
   .news-item{padding:9px 12px}
   /* 弹窗不溢出屏幕 */
@@ -225,10 +220,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
   .thermo-formula{font-size:9px;margin-top:6px;padding:5px}
   .thermo-sub-name{width:62px;font-size:10px}
   /* 筛选 chips 加大触控区域 */
-  .news-region-label,.news-people-label{display:none}
+  .news-region-label{display:none}
   .news-filter{padding:5px 11px;font-size:11px}
   .news-regions{padding:7px 10px 0}
-  .news-people{padding:5px 10px 0}
   .news-filters{padding:7px 10px}
   /* 资讯条目 */
   .news-item{padding:9px 10px}
@@ -341,10 +335,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
       <div class="news-filter" data-region="cn">🇨🇳 国内</div>
       <div class="news-filter" data-region="global">🌍 海外</div>
     </div>
-    <div class="news-people" id="peopleBar">
-      <span class="news-people-label">👤 人物表态</span>
-      <div class="news-filter person-active" data-person="all">全部</div>
-    </div>
     <div class="news-filters" id="newsFilters">
       <div class="news-filter active" data-sector="all">全部</div>
     </div>
@@ -426,8 +416,6 @@ let newsItems = [];
 let usData = [];            // 美股核心标的行情
 let currentFilter = 'all';
 let currentRegion = 'all';  // all, cn, global
-let currentPerson = 'all';  // all 或人物 id (musk/trump/...)
-let peopleStats = [];       // [{id,name,role,count}] 人物表态统计
 let rankMetric = 'change';  // change, turnover, flow
 let indexHistory = {};      // id -> [values] 用于 sparkline
 let expandedNews = new Set(); // 已展开全文的资讯 id
@@ -501,14 +489,6 @@ async function refreshGlobal() {
     usData = data.us || [];
     renderUSMarket();
   } catch (e) { console.warn('global market failed', e); }
-}
-
-async function refreshPeople() {
-  try {
-    const data = await fetchJSON('/api/people');
-    peopleStats = data.people || [];
-    renderPeopleBar();
-  } catch (e) { console.warn('people failed', e); }
 }
 
 // ========== RENDER FUNCTIONS ==========
@@ -649,8 +629,7 @@ function renderNews() {
 
   const filtered = newsItems.filter(n =>
     (currentRegion === 'all' || (n.region || 'cn') === currentRegion) &&
-    (currentFilter === 'all' || n.sector === currentFilter) &&
-    (currentPerson === 'all' || (n.people || []).includes(currentPerson))
+    (currentFilter === 'all' || n.sector === currentFilter)
   );
 
   const impactMap = {
@@ -678,12 +657,9 @@ function renderNews() {
     const isGlobal = n.region === 'global';
     const researchBadge = n.research ? '<span class="news-research">📊 研报</span>' : '';
     const srcBadge = n.source ? `<span class="news-source">${isGlobal ? '🌍 ' : ''}${esc(n.source)}</span>` : '';
-    // 人物表态徽标: 如 "👤 马斯克"
-    const personBadge = (n.people || []).length
-      ? `<span class="news-person">👤 ${esc((n.people || []).map(pid => {
-          const p = peopleStats.find(x => x.id === pid);
-          return p ? p.name : pid;
-        }).join(' / '))}</span>` : '';
+    // 人物表态徽标: 来源备注直接用人名 (仅命中赛道的条目; 无赛道条目的板块标签已是人名)
+    const pnames = (n.peopleNames || []).join(' / ');
+    const personBadge = pnames && n.sector ? `<span class="news-person">👤 ${esc(pnames)}</span>` : '';
     const linkHtml = n.link ? `<a class="news-link" href="${esc(n.link)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">查看原文 ↗</a>` : '';
     // 双语标题: 海外资讯有 titleZh 时中文为主, 英文原文小字灰显
     const zhTitle = n.titleZh && n.titleZh !== n.title ? n.titleZh : null;
@@ -817,30 +793,6 @@ function renderNewsFilters() {
   });
 }
 
-// 人物表态筛选栏: 显示有表态记录的人物 (带计数), 点击过滤资讯流
-function renderPeopleBar() {
-  const bar = document.getElementById('peopleBar');
-  if (!bar) return;
-  const act = p => p === currentPerson ? ' person-active' : '';
-  let html = '<span class="news-people-label">👤 人物表态</span>';
-  html += `<div class="news-filter${act('all')}" data-person="all">全部</div>`;
-  (peopleStats || []).forEach(p => {
-    if (!p.count) return;
-    html += `<div class="news-filter${act(p.id)}" data-person="${p.id}"
-      title="${esc(p.role)} · 当前资讯池中 ${p.count} 条表态">
-      ${esc(p.name)}<span class="news-person-cnt">${p.count}</span></div>`;
-  });
-  bar.innerHTML = html;
-  bar.querySelectorAll('.news-filter').forEach(el => {
-    el.addEventListener('click', () => {
-      bar.querySelectorAll('.news-filter').forEach(f => f.classList.remove('person-active'));
-      el.classList.add('person-active');
-      currentPerson = el.dataset.person;
-      renderNews();
-    });
-  });
-}
-
 // 全球科技市场 (美股核心标的, 按赛道分组, 红涨绿跌)
 function renderUSMarket() {
   const list = document.getElementById('usMarketList');
@@ -968,11 +920,10 @@ updateClock();
 setInterval(updateClock, 1000);
 
 (async function init() {
-  await Promise.all([loadTrends(), refreshOverview(), refreshNews(), refreshGlobal(), refreshPeople()]);
+  await Promise.all([loadTrends(), refreshOverview(), refreshNews(), refreshGlobal()]);
   setInterval(refreshOverview, 3000);
   setInterval(refreshNews, 20000);
   setInterval(refreshGlobal, 5000);
-  setInterval(refreshPeople, 20000);
 })();
 </script>
 </body>

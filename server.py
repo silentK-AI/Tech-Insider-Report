@@ -13,7 +13,7 @@
   GET /api/news      -> 按科技赛道分类的 7x24 快讯
   GET /api/trends    -> 各指数当日分时序列 (用于迷你走势图)
   GET /api/global    -> 美股核心科技标的行情 (18只, 覆盖8赛道)
-  GET /api/people    -> 重要人物表态动态 (马斯克/特朗普/OpenAI等掌门人)
+  人物表态不单独成板块: 命中"人名+表态词"的快讯打 peopleNames 标签, 前端以人名徽标展示
 """
 import difflib
 import hashlib
@@ -194,6 +194,12 @@ def match_people(title, content):
         if said:
             hits.append(p["id"])
     return hits
+
+
+def people_names(ids):
+    """人物 id 列表 -> 姓名列表 (用于前端徽标展示)"""
+    m = {p["id"]: p["name"] for p in PEOPLE}
+    return [m[i] for i in ids if i in m]
 
 
 # ============ HTTP 工具 ============
@@ -396,6 +402,7 @@ def fetch_news(page_size=100):
             sector = next((s for s in SECTORS if s["id"] == sid), None)
             if sector is None:
                 continue
+            _peo = match_people(_clean_title(title), summary or "")
             items.append({
                 "id": str(n.get("code") or ""),
                 "region": "cn",
@@ -406,7 +413,7 @@ def fetch_news(page_size=100):
                 "sectorColor": sector["color"],
                 "title": _clean_title(title),
                 "content": _clean_content(summary, n.get("digest"), title),
-                "people": match_people(_clean_title(title), summary or ""),
+                "people": _peo, "peopleNames": people_names(_peo),
                 "impact": classify_impact(text),
                 "importance": classify_importance(text),
                 "source": "东方财富",
@@ -676,8 +683,8 @@ WSCN_CHANNELS = ["us-stock-channel", "global-channel"]
 def _build_item(item_id, full_time, title, content, link, source, region="global", drop_names=None):
     """构造统一资讯条目并分类标注。
     过滤规则: 未命中任何科技赛道 且 未命中人物表态 -> 返回 None (过滤无关新闻);
-    命中人物表态但无赛道 -> 保留并归入"人物动态" (用户关注重要人物社交表态,
-    这类新闻如"特朗普宣布关税"常不含科技关键词, 不能因赛道过滤而丢失)。
+    命中人物表态但无赛道 -> 保留, 不设独立人物板块, 标签直接用人物名标注
+    (这类新闻如"特朗普宣布关税"常不含科技关键词, 不能因赛道过滤而丢失)。
     drop_names: 分类时剔除的厂商名(中英文), 避免"三星所有新闻全归存储"式误分类"""
     text = title + " " + content
     cls_text = text
@@ -689,8 +696,7 @@ def _build_item(item_id, full_time, title, content, link, source, region="global
     if sid is None and not people:
         return None
     sector = next((s for s in SECTORS if s["id"] == sid), None) if sid else None
-    if sid is None:
-        sid = "people"          # 人物动态伪赛道 (命中人物表态但无科技赛道)
+    pnames = people_names(people)
     if region == "global" and any(w in text.lower() for w in A_SHARE_WORDS):
         region = "cn"           # 海外源中混入的 A 股/港股新闻归为国内
     imp = classify_importance(text)
@@ -701,11 +707,12 @@ def _build_item(item_id, full_time, title, content, link, source, region="global
         "id": item_id, "region": region,
         "time": full_time[11:19] if len(full_time) >= 19 else full_time,
         "fullTime": full_time,
-        "sector": sid, "sectorName": sector["name"] if sector else "人物动态",
+        "sector": sid,
+        "sectorName": sector["name"] if sector else "·".join(pnames),
         "sectorColor": sector["color"] if sector else "#b37feb",
         "title": title, "content": content, "link": link,
         "source": source, "research": research,
-        "people": people,
+        "people": people, "peopleNames": pnames,
         "impact": classify_impact(text), "importance": imp,
     }
 
@@ -862,21 +869,7 @@ def fetch_global_news():
     return pool
 
 
-def load_people():
-    """聚合带人物标签的资讯 -> 人物动态数据 (人物定义+计数+表态条目)"""
-    cn = fetch_news(200)
-    gl = fetch_global_news()
-    items = merge_news(cn, gl)
-    items = [it for it in items if it.get("people")]
-    counts = {p["id"]: 0 for p in PEOPLE}
-    for it in items:
-        for pid in it["people"]:
-            counts[pid] = counts.get(pid, 0) + 1
-    return {
-        "people": [{"id": p["id"], "name": p["name"], "role": p["role"],
-                    "count": counts[p["id"]]} for p in PEOPLE],
-        "items": items[:80],
-    }
+# 人物表态不再单独成板块/接口: PEOPLE/match_people 仅供 _build_item 打人名标签
 
 
 # ============ 内容级去重 ============
@@ -1117,9 +1110,6 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/global":
                 us = cache.get("us_market", 20, fetch_us_market)
                 self.send_json({"ts": int(time.time() * 1000), "us": us})
-            elif path == "/api/people":
-                data = cache.get("people", 10, load_people)
-                self.send_json({"ts": int(time.time() * 1000), **data})
             else:
                 self.send_error(404)
         except Exception as e:
@@ -1150,7 +1140,6 @@ if __name__ == "__main__":
                 ("news_cn", 10, lambda: fetch_news(200)),
                 ("news_global", 60, fetch_global_news),
                 ("us_market", 20, fetch_us_market),
-                ("people", 10, load_people),
                 ("trends", 60, fetch_trends)]
         for k, ttl, fn in jobs:
             try:
