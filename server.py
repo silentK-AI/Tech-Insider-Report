@@ -9,12 +9,14 @@
 启动:  python3 server.py [port]   (默认 8080)
 接口:
   GET /              -> 静态站点 (index.html)
-  GET /api/overview  -> 指数行情 + 板块聚合行情 + 温度
+  GET /api/overview  -> 指数行情 + 板块聚合行情 + 温度 (+marketOpen: 非交易时段返回收盘定格数据)
   GET /api/news      -> 按科技赛道分类的 7x24 快讯
   GET /api/trends    -> 各指数当日分时序列 (用于迷你走势图)
   GET /api/global    -> 美股核心科技标的行情 (18只, 覆盖8赛道)
-  人物表态不单独成板块: 命中"人名+表态词"的快讯打 peopleNames 标签, 前端以人名徽标展示
+  人物资讯并入板块: 命中"人名+表态词"的快讯打 peopleNames 标签, 前端以人名徽标作来源标注;
+  无赛道关键词的人物资讯按人物默认所属赛道归类 (PEOPLE[].sector)
 """
+import datetime
 import difflib
 import hashlib
 import json
@@ -154,17 +156,82 @@ RESEARCH_WORDS = ["研报", "评级", "目标价", "摩根士丹利", "大摩", 
                   "deutsche bank", "analyst", "analysts", "price target", "rating", "upgrade",
                   "downgrade", "bernstein", "susquehanna", "keybanc", "mizuho", "research note"]
 
-# 重要人物表态追踪 (科技/政策掌门人) -> 命中"人物名+表态词"的资讯打上人物标签
+# 重要人物表态追踪 (科技/政策掌门人) -> 命中"人物名+表态词"的资讯打上人物标签。
+# sector: 人物默认所属赛道。无赛道关键词的人物资讯 (如"特朗普宣布关税")归入该赛道,
+# 使人物资讯并入板块资讯流, 前端以人名徽标作来源标注
 PEOPLE = [
-    {"id": "musk",     "name": "马斯克",     "role": "特斯拉·xAI·SpaceX", "keys": ["马斯克", "musk", "elon"]},
-    {"id": "trump",    "name": "特朗普",     "role": "美国政策",          "keys": ["特朗普", "川普", "trump"]},
-    {"id": "altman",   "name": "奥特曼",     "role": "OpenAI CEO",        "keys": ["奥特曼", "altman"]},
-    {"id": "huang",    "name": "黄仁勋",     "role": "英伟达 CEO",        "keys": ["黄仁勋", "jensen huang"]},
-    {"id": "su",       "name": "苏姿丰",     "role": "AMD CEO",           "keys": ["苏姿丰", "lisa su"]},
-    {"id": "zuckerberg", "name": "扎克伯格", "role": "Meta CEO",          "keys": ["扎克伯格", "zuckerberg"]},
-    {"id": "pichai",   "name": "皮查伊",     "role": "谷歌 CEO",          "keys": ["皮查伊", "pichai"]},
-    {"id": "nadella",  "name": "纳德拉",     "role": "微软 CEO",          "keys": ["纳德拉", "nadella"]},
-    {"id": "amodei",   "name": "阿莫迪",     "role": "Anthropic CEO",     "keys": ["阿莫迪", "amodei"]},
+    # --- GPU / 算力 ---
+    {"id": "musk",       "name": "马斯克",     "role": "特斯拉·xAI·SpaceX", "sector": "gpu",
+     "keys": ["马斯克", "musk", "elon"]},
+    {"id": "huang",      "name": "黄仁勋",     "role": "英伟达 CEO",        "sector": "gpu",
+     "keys": ["黄仁勋", "jensen huang"]},
+    {"id": "su",         "name": "苏姿丰",     "role": "AMD CEO",           "sector": "gpu",
+     "keys": ["苏姿丰", "lisa su"]},
+    {"id": "chents",     "name": "陈天石",     "role": "寒武纪 CEO",        "sector": "gpu",
+     "keys": ["陈天石"]},
+    # --- 半导体芯片 / 政策 ---
+    {"id": "trump",      "name": "特朗普",     "role": "美国政策",          "sector": "semi_chip",
+     "keys": ["特朗普", "川普", "trump"]},
+    {"id": "zhangzm",    "name": "张忠谋",     "role": "台积电创始人",      "sector": "semi_chip",
+     "keys": ["张忠谋", "morris chang"]},
+    {"id": "weizj",      "name": "魏哲家",     "role": "台积电 CEO",        "sector": "semi_chip",
+     "keys": ["魏哲家", "c.c. wei"]},
+    {"id": "gelsinger",  "name": "基辛格",     "role": "前英特尔 CEO",      "sector": "semi_chip",
+     "keys": ["基辛格", "pat gelsinger"]},
+    {"id": "renzf",      "name": "任正非",     "role": "华为创始人",        "sector": "semi_chip",
+     "keys": ["任正非"]},
+    {"id": "yucd",       "name": "余承东",     "role": "华为",              "sector": "semi_chip",
+     "keys": ["余承东"]},
+    # --- 半导体设备 ---
+    {"id": "yinzy",      "name": "尹志尧",     "role": "中微公司董事长",    "sector": "semi_eq",
+     "keys": ["尹志尧"]},
+    # --- 存储芯片 ---
+    {"id": "leejy",      "name": "李在镕",     "role": "三星电子会长",      "sector": "storage",
+     "keys": ["李在镕", "lee jae-yong", "jay y. lee"]},
+    {"id": "mehrotra",   "name": "梅赫罗特拉", "role": "美光 CEO",          "sector": "storage",
+     "keys": ["梅赫罗特拉", "sanjay mehrotra"]},
+    {"id": "zhuym",      "name": "朱一明",     "role": "兆易创新创始人",    "sector": "storage",
+     "keys": ["朱一明"]},
+    # --- 光通信 ---
+    {"id": "hocktan",    "name": "陈福阳",     "role": "博通 CEO",          "sector": "optical",
+     "keys": ["陈福阳", "hock tan"]},
+    # --- 机器人 ---
+    {"id": "leijun",     "name": "雷军",       "role": "小米集团",          "sector": "robot",
+     "keys": ["雷军"]},
+    {"id": "wangxx",     "name": "王兴兴",     "role": "宇树科技创始人",    "sector": "robot",
+     "keys": ["王兴兴"]},
+    {"id": "wangcf",     "name": "王传福",     "role": "比亚迪",            "sector": "robot",
+     "keys": ["王传福"]},
+    {"id": "zengyq",     "name": "曾毓群",     "role": "宁德时代",          "sector": "robot",
+     "keys": ["曾毓群"]},
+    # --- AI 大模型 ---
+    {"id": "altman",     "name": "奥特曼",     "role": "OpenAI CEO",        "sector": "ai_model",
+     "keys": ["奥特曼", "altman"]},
+    {"id": "amodei",     "name": "阿莫迪",     "role": "Anthropic CEO",     "sector": "ai_model",
+     "keys": ["阿莫迪", "amodei"]},
+    {"id": "zuckerberg", "name": "扎克伯格",   "role": "Meta CEO",          "sector": "ai_model",
+     "keys": ["扎克伯格", "zuckerberg"]},
+    {"id": "pichai",     "name": "皮查伊",     "role": "谷歌 CEO",          "sector": "ai_model",
+     "keys": ["皮查伊", "劈柴", "pichai"]},
+    {"id": "liangwf",    "name": "梁文锋",     "role": "DeepSeek 创始人",   "sector": "ai_model",
+     "keys": ["梁文锋"]},
+    {"id": "liyanhong",  "name": "李彦宏",     "role": "百度",              "sector": "ai_model",
+     "keys": ["李彦宏"]},
+    {"id": "yangzl",     "name": "杨植麟",     "role": "月之暗面",          "sector": "ai_model",
+     "keys": ["杨植麟"]},
+    {"id": "wangxc",     "name": "王小川",     "role": "百川智能",          "sector": "ai_model",
+     "keys": ["王小川"]},
+    {"id": "liuqf",      "name": "刘庆峰",     "role": "科大讯飞",          "sector": "ai_model",
+     "keys": ["刘庆峰"]},
+    {"id": "zhouhy",     "name": "周鸿祎",     "role": "三六零",            "sector": "ai_model",
+     "keys": ["周鸿祎"]},
+    # --- AI 应用 ---
+    {"id": "nadella",    "name": "纳德拉",     "role": "微软 CEO",          "sector": "ai_app",
+     "keys": ["纳德拉", "nadella"]},
+    {"id": "cook",       "name": "库克",       "role": "苹果 CEO",          "sector": "ai_app",
+     "keys": ["库克", "tim cook"]},
+    {"id": "mahuateng",  "name": "马化腾",     "role": "腾讯",              "sector": "ai_app",
+     "keys": ["马化腾"]},
 ]
 # 表态词: 命中人物名 + 任一表态词 -> 判定为人物表态类资讯 (而非单纯提及)
 SAY_WORDS = ["称", "表示", "说", "宣布", "发帖", "发文", "呼吁", "警告", "回应", "表态",
@@ -200,6 +267,14 @@ def people_names(ids):
     """人物 id 列表 -> 姓名列表 (用于前端徽标展示)"""
     m = {p["id"]: p["name"] for p in PEOPLE}
     return [m[i] for i in ids if i in m]
+
+
+_PEOPLE_SECTOR = {p["id"]: p["sector"] for p in PEOPLE}
+
+
+def people_sector(pid):
+    """人物默认所属赛道 id (无赛道关键词的人物资讯归入该板块)"""
+    return _PEOPLE_SECTOR.get(pid)
 
 
 # ============ HTTP 工具 ============
@@ -313,6 +388,17 @@ def fetch_sectors(quotes):
     return out
 
 
+def is_trading_time(now=None):
+    """A股交易时段: 周一~周五 9:15-11:30 / 13:00-15:00 (9:15 起集合竞价, 数据已开始跳动)。
+    非交易时段行情应停留在当天收盘那一刻, 不再刷新"""
+    now = now or datetime.datetime.now()
+    if now.weekday() >= 5:
+        return False
+    t = now.time()
+    return (datetime.time(9, 15) <= t <= datetime.time(11, 30)) or \
+           (datetime.time(13, 0) <= t <= datetime.time(15, 0))
+
+
 def load_overview():
     all_secids = [sec[0] for sec in INDEX_SECIDS]
     for s in SECTORS:
@@ -397,12 +483,14 @@ def fetch_news(page_size=100):
             summary = n.get("summary") or ""
             text = title + " " + summary
             sid = classify_sector(text)
+            _peo = match_people(_clean_title(title), summary or "")
+            if sid is None and _peo:
+                sid = people_sector(_peo[0])    # 人物资讯并入人物默认赛道
             if sid is None:
                 continue
             sector = next((s for s in SECTORS if s["id"] == sid), None)
             if sector is None:
                 continue
-            _peo = match_people(_clean_title(title), summary or "")
             items.append({
                 "id": str(n.get("code") or ""),
                 "region": "cn",
@@ -682,9 +770,9 @@ WSCN_CHANNELS = ["us-stock-channel", "global-channel"]
 
 def _build_item(item_id, full_time, title, content, link, source, region="global", drop_names=None):
     """构造统一资讯条目并分类标注。
-    过滤规则: 未命中任何科技赛道 且 未命中人物表态 -> 返回 None (过滤无关新闻);
-    命中人物表态但无赛道 -> 保留, 不设独立人物板块, 标签直接用人物名标注
-    (这类新闻如"特朗普宣布关税"常不含科技关键词, 不能因赛道过滤而丢失)。
+    过滤规则: 未命中任何科技赛道 且 未命中人物表态 -> 返回 None (过滤无关新闻)。
+    人物资讯并入板块: 命中人物表态但无赛道关键词时, 归入人物默认所属赛道,
+    人名通过 peopleNames 标签透出, 由前端作来源徽标展示 (不再以人名充当板块名)。
     drop_names: 分类时剔除的厂商名(中英文), 避免"三星所有新闻全归存储"式误分类"""
     text = title + " " + content
     cls_text = text
@@ -693,9 +781,11 @@ def _build_item(item_id, full_time, title, content, link, source, region="global
             cls_text = re.sub(re.escape(nm), "", cls_text, flags=re.IGNORECASE)
     sid = classify_sector(cls_text)
     people = match_people(title, content)
-    if sid is None and not people:
+    if sid is None and people:
+        sid = people_sector(people[0])
+    if sid is None:
         return None
-    sector = next((s for s in SECTORS if s["id"] == sid), None) if sid else None
+    sector = next((s for s in SECTORS if s["id"] == sid), None)
     pnames = people_names(people)
     if region == "global" and any(w in text.lower() for w in A_SHARE_WORDS):
         region = "cn"           # 海外源中混入的 A 股/港股新闻归为国内
@@ -708,8 +798,8 @@ def _build_item(item_id, full_time, title, content, link, source, region="global
         "time": full_time[11:19] if len(full_time) >= 19 else full_time,
         "fullTime": full_time,
         "sector": sid,
-        "sectorName": sector["name"] if sector else "·".join(pnames),
-        "sectorColor": sector["color"] if sector else "#b37feb",
+        "sectorName": sector["name"] if sector else "",
+        "sectorColor": sector["color"] if sector else "#8b949e",
         "title": title, "content": content, "link": link,
         "source": source, "research": research,
         "people": people, "peopleNames": pnames,
@@ -869,7 +959,7 @@ def fetch_global_news():
     return pool
 
 
-# 人物表态不再单独成板块/接口: PEOPLE/match_people 仅供 _build_item 打人名标签
+# 人物资讯并入板块: PEOPLE/match_people 供 _build_item 打人名标签并回退人物默认赛道
 
 
 # ============ 内容级去重 ============
@@ -1053,6 +1143,7 @@ class TTLCache:
             val = loader()
             with self.lock:
                 self.data[key] = (time.time(), val)
+            return val
         finally:
             with self.lock:
                 self.refreshing.discard(key)
@@ -1077,6 +1168,19 @@ class TTLCache:
 cache = TTLCache()
 
 
+def get_overview():
+    """交易时段: 2s TTL 实时刷新。
+    非交易时段: 切换到收盘快照缓存 (独立 key, 10 分钟 TTL) ——
+    收盘后第一次请求抓到的就是收盘定格数据, 之后一直复用, 温度计停在收盘那一刻;
+    快照若抓取失败(空数据)则走 30s 短 TTL 重试通道, 不冻结空结果"""
+    open_ = is_trading_time()
+    key = "overview" if open_ else "overview_closed"
+    data = cache.get(key, 2 if open_ else 600, load_overview)
+    if not open_ and not data.get("sectors"):
+        data = cache.get("overview_retry", 30, load_overview)
+    return {**data, "marketOpen": open_}
+
+
 # ============ HTTP Handler ============
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -1092,7 +1196,7 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_api(self, path):
         try:
             if path == "/api/overview":
-                data = cache.get("overview", 2, load_overview)
+                data = get_overview()
                 self.send_json({"ts": int(time.time() * 1000), **data})
             elif path == "/api/news":
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -1136,11 +1240,14 @@ if __name__ == "__main__":
     def _prewarm_and_refresh():
         """启动预热 + 周期性后台刷新, 保证 API 请求始终命中缓存"""
         time.sleep(0.5)
-        jobs = [("overview", 2, load_overview),
-                ("news_cn", 10, lambda: fetch_news(200)),
+        jobs = [("news_cn", 10, lambda: fetch_news(200)),
                 ("news_global", 60, fetch_global_news),
                 ("us_market", 20, fetch_us_market),
                 ("trends", 60, fetch_trends)]
+        try:
+            get_overview()  # 按当前交易时段选择实时/收盘缓存 key
+        except Exception as e:
+            print("[prewarm] overview", e)
         for k, ttl, fn in jobs:
             try:
                 cache.get(k, ttl, fn)
@@ -1149,7 +1256,7 @@ if __name__ == "__main__":
         while True:
             time.sleep(20)
             try:
-                cache.get("overview", 2, load_overview)
+                get_overview()
                 cache.get("us_market", 20, fetch_us_market)
             except Exception as e:
                 print("[bg]", e)
