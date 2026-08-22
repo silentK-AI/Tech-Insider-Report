@@ -285,14 +285,43 @@ def http_get(url, referer="https://quote.eastmoney.com/", timeout=8):
 
 
 # ============ 行情抓取 ============
+# ============ 行情域名容灾 ============
+# push2 主站偶发对所有客户端直接断连(TLS 握手后 Empty reply, IPv4/IPv6 均挂),
+# push2delay 为同款镜像(接口与字段完全一致)。按序尝试并记住最近可用域名;
+# 若备用镜像是延迟行情, 每 10 分钟回探一次主站以便切回实时源
+_QUOTE_HOSTS = ["push2.eastmoney.com", "push2delay.eastmoney.com"]
+_quote_host = 0        # 最近可用域名下标
+_quote_host_ts = 0.0   # 最近切换时间
+
+
+def _quote_api(path):
+    """按序尝试行情域名取 JSON, 全部失败抛最后异常"""
+    global _quote_host, _quote_host_ts
+    if _quote_host != 0 and time.time() - _quote_host_ts > 600:
+        _quote_host = 0                      # 定期回探主站
+    start = _quote_host
+    last_err = None
+    for i in range(len(_QUOTE_HOSTS)):
+        idx = (start + i) % len(_QUOTE_HOSTS)
+        try:
+            data = json.loads(http_get("https://" + _QUOTE_HOSTS[idx] + path))
+            _quote_host = idx                # 记住本次可用域名
+            return data
+        except Exception as e:
+            last_err = e
+            print("[quote-host] {} err: {}".format(_QUOTE_HOSTS[idx], e))
+            _quote_host_ts = time.time()
+    _quote_host = (start + 1) % len(_QUOTE_HOSTS)   # 全挂: 下次换域名起步
+    raise last_err or RuntimeError("quote hosts all failed")
+
+
 def fetch_quotes(secids):
     """批量获取行情。secids: ["1.600519", ...] -> {secid: {...}}"""
     if not secids:
         return {}
-    url = ("https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2"
-           "&fields=f2,f3,f6,f8,f10,f12,f13,f14,f20,f62&secids=" + ",".join(secids))
     try:
-        data = json.loads(http_get(url))
+        data = _quote_api("/api/qt/ulist.np/get?fltt=2&invt=2"
+                          "&fields=f2,f3,f6,f8,f10,f12,f13,f14,f20,f62&secids=" + ",".join(secids))
         out = {}
         for d in (data.get("data") or {}).get("diff") or []:
             secid = "{}.".format(d.get("f13", 1)) + str(d.get("f12", ""))
@@ -1113,12 +1142,12 @@ def merge_news(cn, gl):
 def fetch_trends():
     out = {}
     for secid, name, kid in INDEX_SECIDS:
-        url = ("https://push2his.eastmoney.com/api/qt/stock/trends2/get?"
-               "secid={}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13"
-               "&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ndays=1&iscr=0&_={}".format(
-                   secid, int(time.time() * 1000)))
+        path = ("/api/qt/stock/trends2/get?"
+                "secid={}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13"
+                "&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ndays=1&iscr=0&_={}".format(
+                    secid, int(time.time() * 1000)))
         try:
-            data = json.loads(http_get(url, referer="https://quote.eastmoney.com/"))
+            data = _quote_api(path)
             trends = (data.get("data") or {}).get("trends") or []
             pts = [float(t.split(",")[2]) for t in trends]  # f53 = 最新价
             out[kid] = pts[-80:] if pts else []
