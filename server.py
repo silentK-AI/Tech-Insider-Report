@@ -315,6 +315,22 @@ def _quote_api(path):
     raise last_err or RuntimeError("quote hosts all failed")
 
 
+def _num(x, default=0.0):
+    """东财字段安全转 float: '-' / None / 空串 -> default。保证下游算术不崩。"""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return default
+
+
+def _optnum(x):
+    """价格类: 无效值('-' / None) -> None, 下游据此跳过该标的。"""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_quotes(secids):
     """批量获取行情。secids: ["1.600519", ...] -> {secid: {...}}"""
     if not secids:
@@ -328,13 +344,13 @@ def fetch_quotes(secids):
             out[secid] = {
                 "code": str(d.get("f12", "")),
                 "name": d.get("f14", ""),
-                "price": d.get("f2"),
-                "change": d.get("f3"),
-                "amount": d.get("f6") or 0,
-                "turnover": d.get("f8") or 0,
-                "volratio": d.get("f10") or 1,
-                "cap": d.get("f20") or 0,
-                "flow": d.get("f62") or 0,
+                "price": _optnum(d.get("f2")),     # 无效 -> None, 下游跳过
+                "change": _num(d.get("f3")),
+                "amount": _num(d.get("f6")),
+                "turnover": _num(d.get("f8")),
+                "volratio": _num(d.get("f10"), 1.0),
+                "cap": _num(d.get("f20")),
+                "flow": _num(d.get("f62")),
             }
         return out
     except Exception as e:
