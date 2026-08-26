@@ -9,7 +9,7 @@
 启动:  python3 server.py [port]   (默认 8080)
 接口:
   GET /              -> 静态站点 (index.html)
-  GET /api/overview  -> 指数行情 + 板块聚合行情 + 温度 (+marketOpen: 非交易时段返回收盘定格数据)
+  GET /api/overview  -> 指数行情 + 板块聚合行情 + 温度 + 当日温度曲线(tempHistory) (+marketOpen: 非交易时段返回收盘定格数据)
   GET /api/news      -> 按科技赛道分类的 7x24 快讯
   GET /api/trends    -> 各指数当日分时序列 (用于迷你走势图)
   GET /api/global    -> 美股核心科技标的行情 (18只, 覆盖8赛道)
@@ -449,7 +449,75 @@ def load_overview():
     for s in SECTORS:
         all_secids.extend(c for c, _ in s["stocks"])
     quotes = fetch_quotes(list(dict.fromkeys(all_secids)))
-    return {"indices": fetch_indices(quotes), "sectors": fetch_sectors(quotes)}
+    sectors = fetch_sectors(quotes)
+    if sectors:
+        record_temp(sum(s["temp"] for s in sectors) / len(sectors))
+    return {"indices": fetch_indices(quotes), "sectors": sectors}
+
+
+# ============ 当日温度曲线 (竞价 -> 开盘 -> 收盘) ============
+TEMP_HIST_FILE = os.path.join(BASE_DIR, ".temp_history.json")
+TEMP_HIST_MAX_DAYS = 12          # 磁盘保留最近 N 个交易日, 重启后曲线可恢复
+TEMP_HIST_LOCK = __import__("threading").Lock()
+TEMP_HISTORY = {}                # "YYYY-MM-DD" -> [["HH:MM", temp], ...]
+
+
+def _load_temp_hist():
+    try:
+        with open(TEMP_HIST_FILE, "r", encoding="utf-8") as f:
+            hist = json.load(f)
+        if isinstance(hist, dict):
+            for k, v in hist.items():
+                if isinstance(v, list):
+                    TEMP_HISTORY[k] = [[str(p[0]), round(float(p[1]), 2)]
+                                       for p in v if isinstance(p, (list, tuple)) and len(p) >= 2]
+    except Exception:
+        pass
+
+
+def _save_temp_hist():
+    try:
+        tmp = TEMP_HIST_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(TEMP_HISTORY, f, ensure_ascii=False)
+        os.replace(tmp, TEMP_HIST_FILE)
+    except Exception as e:
+        print("[temp-hist] save err:", e)
+
+
+def record_temp(temp):
+    """交易时段 (含 9:15 集合竞价) 每分钟记录一次综合温度, 形成当日波动曲线。
+    周末与收盘后不记录, 避免把隔夜定格数据画进曲线"""
+    now = datetime.datetime.now()
+    if now.weekday() >= 5:
+        return
+    t = now.time()
+    if not (datetime.time(9, 15) <= t <= datetime.time(15, 5)):
+        return
+    day = now.strftime("%Y-%m-%d")
+    hhmm = now.strftime("%H:%M")
+    v = round(temp, 2)
+    with TEMP_HIST_LOCK:
+        pts = TEMP_HISTORY.setdefault(day, [])
+        if pts and pts[-1][0] == hhmm:
+            if pts[-1][1] != v:        # 同分钟内取最新值, 值未变化不落盘
+                pts[-1][1] = v
+                _save_temp_hist()
+        else:
+            pts.append([hhmm, v])
+            for k in sorted(TEMP_HISTORY)[:-TEMP_HIST_MAX_DAYS]:
+                TEMP_HISTORY.pop(k, None)
+            _save_temp_hist()
+
+
+def temp_history_today():
+    day = datetime.datetime.now().strftime("%Y-%m-%d")
+    with TEMP_HIST_LOCK:
+        pts = TEMP_HISTORY.get(day) or []
+        return {"date": day, "points": [list(p) for p in pts]}
+
+
+_load_temp_hist()
 
 
 # ============ 快讯抓取与分类 ============
@@ -1223,7 +1291,7 @@ def get_overview():
     data = cache.get(key, 2 if open_ else 600, load_overview)
     if not open_ and not data.get("sectors"):
         data = cache.get("overview_retry", 30, load_overview)
-    return {**data, "marketOpen": open_}
+    return {**data, "marketOpen": open_, "tempHistory": temp_history_today()}
 
 
 # ============ HTTP Handler ============

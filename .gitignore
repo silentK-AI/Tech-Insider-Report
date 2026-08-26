@@ -1,5 +1,6 @@
 # 运行时缓存与临时文件
 .trans_cache.json
+.temp_history.json
 __pycache__/
 *.pyc
 
