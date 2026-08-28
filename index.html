@@ -42,7 +42,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
 .data-src{font-size:10px;color:var(--text-3);flex-shrink:0}
 
 /* Main layout */
-.main{display:grid;grid-template-columns:300px 1fr 340px;gap:12px;padding:12px;max-width:1920px;margin:0 auto}
+.main{display:grid;grid-template-columns:300px 1fr 340px;gap:12px;padding:12px;max-width:1440px;margin:0 auto}
 .panel{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg-inset)}
 .panel-title{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
@@ -88,11 +88,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
 .news-item.new{animation:highlight 1.5s ease}
 @keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes highlight{0%{background:rgba(24,144,255,.15)}100%{background:transparent}}
-.news-meta{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.news-meta{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
 .news-time{font-size:10px;color:var(--text-3);font-family:var(--mono)}
 .news-tag{font-size:10px;padding:1px 6px;border-radius:3px;font-weight:500}
 .news-impact{font-size:10px;font-weight:600;display:inline-flex;align-items:center;gap:2px}
-.news-title{font-size:13px;line-height:1.5;color:var(--text)}
+.news-title{font-size:13px;line-height:1.5;color:var(--text);word-break:break-word;overflow-wrap:break-word}
 .news-title-en{font-size:11px;line-height:1.5;color:var(--text-3);margin-top:3px;font-family:var(--mono);word-break:break-word}
 /* 中文摘要要点 (海外资讯消化核心信息) */
 .news-digest{font-size:12px;line-height:1.65;color:var(--text-2);margin-top:5px;padding-left:8px;border-left:2px solid var(--border-hover);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -153,7 +153,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
 .pred-probs{display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:11px;font-family:var(--mono)}
 .pred-probs b{font-weight:600}
 .pred-factor-list{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
-.pred-factor{display:grid;grid-template-columns:64px 52px 1fr;align-items:center;gap:8px;padding:5px 0}
+.pred-factor{display:grid;grid-template-columns:64px 52px 1fr;align-items:center;gap:8px;padding:5px 0;min-width:0}
+.pred-fname,.pred-fval{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .pred-fname{font-size:11px;color:var(--text-2);white-space:nowrap}
 .pred-fval{font-size:11px;font-family:var(--mono);text-align:right;white-space:nowrap}
 .pred-fbar{position:relative;height:6px;background:var(--bg-inset);border-radius:3px;overflow:hidden}
@@ -191,7 +192,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
 @media(max-width:1200px){
   .main{grid-template-columns:280px 1fr 300px}
 }
-@media(max-width:900px){
+@media(max-width:1100px){
   .main{grid-template-columns:1fr;gap:10px;padding:10px}
   .news-feed{height:auto;min-height:400px}
   .header{gap:12px;padding:0 12px}
@@ -271,6 +272,40 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
   .stock-cap{min-width:42px}
   .stock-flow{font-size:10px}
   .loading{font-size:11px;padding:20px 8px}
+}
+@media(max-width:480px){
+  /* 更小屏幕进一步压缩 */
+  .logo-text{font-size:13px}
+  .ticker-wrap{display:none}
+  .header-time{font-size:10px}
+  .main{padding:6px;gap:6px}
+  .panel-header{padding:7px 9px}
+  .panel-body{padding:7px 9px}
+  .thermo-value{font-size:30px}
+  .thermo-formula{font-size:8.5px;padding:4px}
+  .pred-verdict{font-size:26px}
+  .pred-probs{gap:10px;font-size:10px}
+  .pred-factor{grid-template-columns:54px 40px 1fr;gap:6px;padding:4px 0}
+  .pred-fname{font-size:10px}
+  .pred-fval{font-size:10px}
+  .pred-head{font-size:10px}
+  .pred-note{font-size:9px;padding:4px}
+  .news-filter{padding:4px 9px;font-size:10px}
+  .news-title{font-size:12px}
+  .rank-item{grid-template-columns:20px 1fr auto auto;gap:5px;padding:7px 8px}
+  .rank-name{font-size:11px}
+  .rank-change{min-width:42px;font-size:10px}
+  .rank-meta{display:none}
+  .us-name{font-size:11px}
+  .us-price{font-size:12px}
+  .heat-val{font-size:13px}
+  .idx-value{font-size:14px}
+}
+@media(max-width:360px){
+  /* 超小屏: 预测因子名称/数值占一行, 进度条另起一行, 获得最大横向空间 */
+  .pred-factor{grid-template-columns:1fr auto;gap:2px 6px;padding:5px 0}
+  .pred-fbar{grid-column:1/-1;height:5px}
+  .pred-fval{text-align:right}
 }
 </style>
 </head>
@@ -748,11 +783,12 @@ function renderTempChart(current) {
   s += `<text x="23" y="56.5" text-anchor="end" style="${LBLM}">0</text>`;
   s += `<text x="23" y="94.5" text-anchor="end" style="${LBLM}">-1.0</text>`;
 
-  // 时间轴
+  // 时间轴 (窄屏使用更短标注, 避免重叠)
+  const narrow = el.clientWidth < 340;
   s += `<text x="${PL}" y="${CH - 14}" text-anchor="start" style="${LBLM}">9:15</text>`;
-  s += `<text x="${px(45 / TRADE_TOTAL)}" y="${CH - 14}" text-anchor="middle" style="${LBLM}">10:00</text>`;
-  s += `<text x="${xLunch}" y="${CH - 14}" text-anchor="middle" style="${LBLM}">11:30/13:00</text>`;
-  s += `<text x="${px(195 / TRADE_TOTAL)}" y="${CH - 14}" text-anchor="middle" style="${LBLM}">14:00</text>`;
+  s += `<text x="${px(45 / TRADE_TOTAL)}" y="${CH - 14}" text-anchor="middle" style="${LBLM}">${narrow ? '10' : '10:00'}</text>`;
+  s += `<text x="${xLunch}" y="${CH - 14}" text-anchor="middle" style="${LBLM}">${narrow ? '午休' : '11:30/13:00'}</text>`;
+  if (!narrow) s += `<text x="${px(195 / TRADE_TOTAL)}" y="${CH - 14}" text-anchor="middle" style="${LBLM}">14:00</text>`;
 
   // 当日高低点
   if (pts.length) {
