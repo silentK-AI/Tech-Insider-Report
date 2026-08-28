@@ -13,6 +13,7 @@
   GET /api/news      -> 按科技赛道分类的 7x24 快讯
   GET /api/trends    -> 各指数当日分时序列 (用于迷你走势图)
   GET /api/global    -> 美股核心科技标的行情 (18只, 覆盖8赛道)
+  GET /api/predict   -> 次日A股科技板块方向预测 (隔夜期指/贵金属/原油/美元 + 关税/战争/美联储新闻情绪)
   人物资讯并入板块: 命中"人名+表态词"的快讯打 peopleNames 标签, 前端以人名徽标作来源标注;
   无赛道关键词的人物资讯按人物默认所属赛道归类 (PEOPLE[].sector)
 """
@@ -1241,6 +1242,197 @@ def fetch_trends():
     return out
 
 
+# ============ 次日方向预测 (隔夜全球因子模型) ============
+# 用当前时点的全球领先信号, 预测下一交易日 A 股科技板块方向:
+#   市场因子: A50期指 / 纳指·标普期货(实时) / 黄金白银 / WTI·布伦特原油 / 美元指数 (新浪行情)
+#   新闻因子: 近 30h 宏观快讯 (华尔街见闻全球频道, 不过赛道过滤) 按关键词分组,
+#             方向由利好/利空词判定 -> 关税 / 地缘战争 / 美联储政策预期 三组情绪分
+# 各因子归一化到 [-1,1] 加权合成总分 -> 看涨/震荡/看跌。模型仅供参考, 不构成投资建议。
+
+PREDICT_TICKERS = {          # id -> (新浪代码, 显示名, 解析类型)
+    "a50":  ("hf_CHA50CFD", "富时A50期指", "fut"),
+    "nq":   ("hf_NQ",       "纳指期货",    "fut"),
+    "es":   ("hf_ES",       "标普期货",    "fut"),
+    "gc":   ("hf_GC",       "COMEX黄金",   "fut"),
+    "si":   ("hf_SI",       "COMEX白银",   "fut"),
+    "cl":   ("hf_CL",       "WTI原油",     "fut"),
+    "oil":  ("hf_OIL",      "布伦特原油",  "fut"),
+    "dxy":  ("DINIW",       "美元指数",    "dxy"),
+}
+
+# 宏观新闻关键词组 (中英混合, 命中即纳入对应因子)
+TARIFF_WORDS = ["关税", "加征", "tariff", "出口管制", "实体清单", "贸易战", "贸易摩擦",
+                "出口限制", "进口限制"]
+WAR_WORDS = ["战争", "军事", "袭击", "导弹", "空袭", "冲突", "军演", "交火", "开战",
+             "停火", "和谈", "war", "missile", "airstrike", "military strike",
+             "drone attack", "ceasefire", "escalat"]
+FED_WORDS = ["美联储", "降息", "加息", "鲍威尔", "fomc", "联储", "利率决议", "缩表",
+             "fed ", "rate cut", "rate hike", "powell", "monetary policy"]
+
+MACRO_NEWS_POOL = {}          # id -> {id, fullTime, text}, 宏观快讯池 (独立于资讯流)
+MACRO_POOL_LOCK = __import__("threading").Lock()
+
+
+def fetch_macro_news():
+    """华尔街见闻全球频道原始快讯 -> 宏观池。不过赛道/人物过滤 (关税/战争/美联储
+    新闻大多不含科技关键词, 必须独立抓取), 只保留最近 48h"""
+    base = ("https://api-one.wallstcn.com/apiv1/content/lives?"
+            "channel=global-channel&limit=100&client=pc")
+    items = []
+    try:
+        data = json.loads(http_get(base, referer="https://wallstreetcn.com/"))
+        for it in (data.get("data") or {}).get("items") or []:
+            text = (it.get("content_text") or "").strip()
+            ts = it.get("display_time") or 0
+            if not text or not ts:
+                continue
+            items.append({"id": "m:" + str(it.get("id") or ""),
+                          "fullTime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)),
+                          "text": text})
+    except Exception as e:
+        print("[macro] err:", e)
+    cutoff = (datetime.datetime.now() - datetime.timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+    with MACRO_POOL_LOCK:
+        for it in items:
+            MACRO_NEWS_POOL[it["id"]] = it
+        for k in [k for k, v in MACRO_NEWS_POOL.items() if v["fullTime"] < cutoff]:
+            MACRO_NEWS_POOL.pop(k, None)
+    return items
+
+
+def _news_factor(words, hours=30):
+    """宏观新闻情绪因子: 近 N 小时命中关键词组的快讯, 方向按利好/利空词计票,
+    差值饱和归一 (3 条净同向即满格)。返回 (score, 条数, 最新标题列表)"""
+    cutoff = (datetime.datetime.now() - datetime.timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    with MACRO_POOL_LOCK:
+        pool = sorted(MACRO_NEWS_POOL.values(), key=lambda x: x["fullTime"], reverse=True)
+    hits = [it for it in pool
+            if it["fullTime"] >= cutoff
+            and any(w in it["text"].lower() for w in words)]
+    ups = sum(1 for it in hits if classify_impact(it["text"]) == "up")
+    downs = sum(1 for it in hits if classify_impact(it["text"]) == "down")
+    raw = (ups - downs) / max(3, len(hits)) if hits else 0.0
+    heads = [{"time": h["fullTime"][11:16], "text": h["text"][:56]} for h in hits[:3]]
+    return round(max(-1.0, min(1.0, raw)), 2), len(hits), heads
+
+
+def fetch_predict_quotes():
+    """新浪全球期货/美元指数行情 -> {id: {name, price, chg(%)}}。
+    期货: f[0]=现价 f[7]=昨结算; 美元指数: f[1]=现价 f[5]=昨收"""
+    url = "https://hq.sinajs.cn/list=" + ",".join(t[0] for t in PREDICT_TICKERS.values())
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA,
+                                                   "Referer": "https://finance.sina.com.cn"})
+        raw = urllib.request.urlopen(req, timeout=8).read().decode("gbk", "ignore")
+    except Exception as e:
+        print("[predict-quotes] err:", e)
+        return {}
+    out = {}
+    for pid, (code, name, kind) in PREDICT_TICKERS.items():
+        m = re.search(r"hq_str_" + re.escape(code) + r'="([^"]*)"', raw)
+        if not m or not m.group(1):
+            continue
+        f = m.group(1).split(",")
+        try:
+            if kind == "fut":
+                price, prev = float(f[0]), float(f[7])
+            else:
+                price, prev = float(f[1]), float(f[5])
+            if prev > 0 and price > 0:
+                out[pid] = {"name": name, "price": round(price, 2),
+                            "chg": round((price - prev) / prev * 100, 2)}
+        except (ValueError, IndexError):
+            continue
+    return out
+
+
+def _next_trade_date(now=None):
+    """下一交易日 (明天起算, 跳过周末)。盘中预测尚未发生的下一交易时段=明天"""
+    now = now or datetime.datetime.now()
+    d = now.date() + datetime.timedelta(days=1)
+    while d.weekday() >= 5:
+        d = d + datetime.timedelta(days=1)
+    return d
+
+
+def load_predict():
+    """合成次日方向预测。市场因子缺源自动跳过并按可用权重归一, 不因单源故障整体失败"""
+    q = fetch_predict_quotes()
+    fetch_macro_news()
+
+    def avg(*pids):
+        vs = [q[p]["chg"] for p in pids if p in q]
+        return round(sum(vs) / len(vs), 2) if vs else None
+
+    def nrm(chg, scale):
+        return None if chg is None else max(-1.0, min(1.0, chg / scale))
+
+    def inv(x):
+        return None if x is None else -x
+
+    factors = []
+
+    def add(fid, name, chg, score, weight, desc):
+        if score is None:
+            return
+        factors.append({"id": fid, "name": name, "chg": chg, "score": round(score, 2),
+                        "weight": weight, "contrib": round(weight * score, 3), "desc": desc})
+
+    # --- 市场因子 (隔夜/实时涨跌幅归一化; 反向因子: 上涨利空) ---
+    add("a50", "A50期指", avg("a50"), nrm(avg("a50"), 1.2), 0.26,
+        "富时中国A50期货, 次日A股最直接的领先信号")
+    add("usf", "美股期指", avg("nq", "es"), nrm(avg("nq", "es"), 1.5), 0.20,
+        "纳指/标普期货实时涨跌, 全球科技风险偏好")
+    add("gold", "贵金属", avg("gc", "si"), inv(nrm(avg("gc", "si"), 1.8)), 0.09,
+        "黄金白银大涨=避险升温, 压制风险资产")
+    add("oil", "原油", avg("cl", "oil"), inv(nrm(avg("cl", "oil"), 3.0)), 0.08,
+        "油价大涨=通胀与成本压力, 利空成长股估值")
+    add("dxy", "美元指数", q.get("dxy", {}).get("chg"),
+        inv(nrm(q.get("dxy", {}).get("chg"), 0.8)), 0.08,
+        "美元走强=全球流动性收紧, 新兴市场承压")
+
+    # --- 新闻因子 (宏观快讯情绪) ---
+    for fid, name, words, weight, desc in [
+        ("fed",    "美联储预期", FED_WORDS,    0.12, "降息预期升温利多, 加息/鹰派利空"),
+        ("tariff", "关税动态",   TARIFF_WORDS, 0.10, "加征/管制升级利空, 豁免/缓和利多"),
+        ("war",    "地缘冲突",   WAR_WORDS,    0.07, "战争/袭击升级利空, 停火和谈利多"),
+    ]:
+        score, cnt, heads = _news_factor(words)
+        add(fid, name, None, score, weight, desc)
+        if factors and factors[-1]["id"] == fid:
+            factors[-1]["newsCount"] = cnt
+            factors[-1]["headlines"] = heads
+
+    w_sum = sum(f["weight"] for f in factors)
+    score = round(sum(f["contrib"] for f in factors) / w_sum, 3) if w_sum else 0.0
+
+    if score > 0.12:
+        verdict, vtext = "up", "看涨"
+    elif score < -0.12:
+        verdict, vtext = "down", "看跌"
+    else:
+        verdict, vtext = "flat", "震荡"
+
+    # 概率: 方向用 sigmoid(score), 震荡概率随得分增大而压缩 (看涨时涨概率必然过半)
+    p_up_raw = 1.0 / (1.0 + pow(2.718281828, -4.0 * score))
+    p_flat = max(0.10, 0.26 - 0.16 * abs(score))
+    p_up = min(0.90, max(0.05, p_up_raw * (1 - p_flat)))
+    p_down = max(0.05, 1 - p_flat - p_up)
+    ntd = _next_trade_date()
+
+    return {
+        "asOf": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "target": {"date": ntd.strftime("%Y-%m-%d"),
+                   "label": ntd.strftime("%m月%d日") + "周" + "一二三四五六日"[ntd.weekday()]},
+        "score": score, "verdict": verdict, "verdictText": vtext,
+        "confidence": round(min(90, 50 + abs(score) * 38)),
+        "probUp": round(p_up * 100), "probFlat": round(p_flat * 100),
+        "probDown": round(p_down * 100),
+        "factors": factors,
+        "disclaimer": "因子模型基于隔夜行情与新闻情绪, 仅供参考, 不构成投资建议",
+    }
+
+
 # ============ TTL 缓存 ============
 class TTLCache:
     """TTL 缓存: 命中返回; 过期则触发后台线程刷新并返回旧值 (请求永不阻塞);
@@ -1327,6 +1519,9 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/global":
                 us = cache.get("us_market", 20, fetch_us_market)
                 self.send_json({"ts": int(time.time() * 1000), "us": us})
+            elif path == "/api/predict":
+                pred = cache.get("predict", 300, load_predict)
+                self.send_json({"ts": int(time.time() * 1000), **pred})
             else:
                 self.send_error(404)
         except Exception as e:
@@ -1356,7 +1551,8 @@ if __name__ == "__main__":
         jobs = [("news_cn", 10, lambda: fetch_news(200)),
                 ("news_global", 60, fetch_global_news),
                 ("us_market", 20, fetch_us_market),
-                ("trends", 60, fetch_trends)]
+                ("trends", 60, fetch_trends),
+                ("predict", 300, load_predict)]
         try:
             get_overview()  # 按当前交易时段选择实时/收盘缓存 key
         except Exception as e:

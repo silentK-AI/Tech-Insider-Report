@@ -146,6 +146,24 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
 .heat-val{font-size:16px;font-weight:700;font-family:var(--mono)}
 .heat-flow{font-size:10px;font-family:var(--mono);margin-top:2px;opacity:.8}
 
+/* Next-day prediction (隔夜全球因子模型) */
+.pred-main{text-align:center;padding:10px 0 6px}
+.pred-target{font-size:11px;color:var(--text-3);margin-bottom:6px}
+.pred-verdict{font-size:30px;font-weight:700;line-height:1.15}
+.pred-probs{display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:11px;font-family:var(--mono)}
+.pred-probs b{font-weight:600}
+.pred-factor-list{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
+.pred-factor{display:grid;grid-template-columns:64px 52px 1fr;align-items:center;gap:8px;padding:5px 0}
+.pred-fname{font-size:11px;color:var(--text-2);white-space:nowrap}
+.pred-fval{font-size:11px;font-family:var(--mono);text-align:right;white-space:nowrap}
+.pred-fbar{position:relative;height:6px;background:var(--bg-inset);border-radius:3px;overflow:hidden}
+.pred-fbar::before{content:'';position:absolute;left:50%;top:0;width:1px;height:100%;background:var(--border-hover);z-index:1}
+.pred-ffill{position:absolute;top:0;height:100%;border-radius:2px;transition:all .6s ease}
+.pred-heads{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:5px}
+.pred-head{font-size:10.5px;color:var(--text-3);line-height:1.5;display:flex;gap:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.pred-head .pred-htime{font-family:var(--mono);flex-shrink:0;color:var(--text-2)}
+.pred-note{font-size:9.5px;color:var(--text-3);text-align:center;margin-top:8px;padding:5px;background:var(--bg-inset);border-radius:4px;line-height:1.6}
+
 /* Stock detail modal */
 .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:200;justify-content:center;align-items:center}
 .modal-overlay.show{display:flex}
@@ -311,6 +329,24 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
       </div>
       <div class="heatmap" id="heatmap"></div>
     </div>
+
+    <!-- Next-day Prediction (隔夜全球因子模型) -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="dot" style="background:#13c2c2"></span>明日方向预测</div>
+        <div class="panel-action" id="predRefresh">隔夜因子模型</div>
+      </div>
+      <div class="panel-body">
+        <div class="pred-main">
+          <div class="pred-target" id="predTarget">下一交易日 · 科技板块</div>
+          <div class="pred-verdict" id="predVerdict">--</div>
+          <div class="pred-probs" id="predProbs"></div>
+        </div>
+        <div class="pred-factor-list" id="predFactors"></div>
+        <div class="pred-heads" id="predHeads"></div>
+        <div class="pred-note" id="predNote"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Center Column - News Feed -->
@@ -410,6 +446,7 @@ let rankMetric = 'change';  // change, turnover, flow
 let indexHistory = {};      // id -> [values] 用于 sparkline
 let tempSeries = [];        // 当日温度曲线 (服务端分钟级采样) [[HH:MM, temp], ...]
 let tempHistDate = '';      // 曲线所属日期, 跨日重置
+let predictData = null;     // 明日方向预测 (隔夜全球因子模型)
 let expandedNews = new Set(); // 已展开全文的资讯 id
 let marketReady = false;
 let newsReady = false;
@@ -497,6 +534,15 @@ async function refreshGlobal() {
     usData = data.us || [];
     renderUSMarket();
   } catch (e) { console.warn('global market failed', e); }
+}
+
+// 明日方向预测 (隔夜因子模型, 服务端 5 分钟缓存, 客户端 60s 轮询)
+async function refreshPredict() {
+  try {
+    const data = await fetchJSON('/api/predict');
+    predictData = data;
+    renderPredict();
+  } catch (e) { console.warn('predict failed', e); }
 }
 
 // ========== RENDER FUNCTIONS ==========
@@ -892,6 +938,64 @@ function renderHeatmap() {
   }).join('');
 }
 
+// ========== 明日方向预测 (隔夜全球因子模型) ==========
+const PRED_VERDICT = {
+  up:   { text: '看涨', color: '#ff4d4f', icon: '▲' },
+  down: { text: '看跌', color: '#00b96b', icon: '▼' },
+  flat: { text: '震荡', color: '#8b949e', icon: '◆' },
+};
+
+function renderPredict() {
+  if (!predictData || !predictData.target || !predictData.factors) return;
+  const p = predictData;
+  const v = PRED_VERDICT[p.verdict] || PRED_VERDICT.flat;
+
+  document.getElementById('predTarget').textContent =
+    `预测 ${p.target.label} · 科技板块方向`;
+
+  const verdictEl = document.getElementById('predVerdict');
+  verdictEl.innerHTML = `<span style="color:${v.color}">${v.icon} ${v.text}</span>
+    <span style="font-size:13px;color:var(--text-3);font-weight:400;margin-left:6px">置信度 ${p.confidence}%</span>`;
+
+  document.getElementById('predProbs').innerHTML =
+    `<span style="color:#ff4d4f">涨 <b>${p.probUp}%</b></span>` +
+    `<span style="color:var(--text-3)">平 <b>${p.probFlat}%</b></span>` +
+    `<span style="color:#00b96b">跌 <b>${p.probDown}%</b></span>`;
+
+  // 因子条形图: 中轴起点, 右红=利多, 左绿=利空; 长度=得分(权重已隐含在贡献里, 显示得分)
+  document.getElementById('predFactors').innerHTML = (p.factors || []).map(f => {
+    const s = Math.max(-1, Math.min(1, f.score || 0));
+    const w = Math.abs(s) * 50;
+    const left = s >= 0 ? '50%' : (50 - w) + '%';
+    const color = s >= 0 ? '#ff4d4f' : '#00b96b';
+    const val = f.chg !== null && f.chg !== undefined
+      ? `${f.chg >= 0 ? '+' : ''}${f.chg.toFixed(2)}%`
+      : `${f.newsCount || 0}条`;
+    const valColor = f.chg !== null && f.chg !== undefined
+      ? (f.chg >= 0 ? '#ff4d4f' : '#00b96b') : 'var(--text-3)';
+    return `<div class="pred-factor" title="${esc(f.desc || '')}">
+      <div class="pred-fname">${esc(f.name)}</div>
+      <div class="pred-fval" style="color:${valColor}">${val}</div>
+      <div class="pred-fbar"><div class="pred-ffill" style="left:${left};width:${w}%;background:${color}"></div></div>
+    </div>`;
+  }).join('');
+
+  // 宏观新闻信号: 关税/战争/美联储 最新命中标题
+  const heads = [];
+  (p.factors || []).forEach(f => {
+    (f.headlines || []).forEach(h => heads.push({ ...h, src: f.name }));
+  });
+  document.getElementById('predHeads').innerHTML = heads.length
+    ? heads.slice(0, 4).map(h =>
+      `<div class="pred-head"><span class="pred-htime">${esc(h.time)}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis">[${esc(h.src)}] ${esc(h.text)}</span></div>`).join('')
+    : '';
+
+  document.getElementById('predNote').textContent = p.disclaimer || '';
+  const refreshEl = document.getElementById('predRefresh');
+  if (refreshEl) refreshEl.textContent = '更新 ' + (p.asOf || '').slice(11, 16);
+}
+
 // Render News Filters
 function renderNewsFilters() {
   const container = document.getElementById('newsFilters');
@@ -1035,10 +1139,11 @@ updateClock();
 setInterval(updateClock, 1000);
 
 (async function init() {
-  await Promise.all([loadTrends(), refreshOverview(), refreshNews(), refreshGlobal()]);
+  await Promise.all([loadTrends(), refreshOverview(), refreshNews(), refreshGlobal(), refreshPredict()]);
   setInterval(refreshOverview, 3000);
   setInterval(refreshNews, 20000);
   setInterval(refreshGlobal, 5000);
+  setInterval(refreshPredict, 60000);
 })();
 </script>
 </body>
