@@ -27,7 +27,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
@@ -1488,6 +1488,9 @@ def get_overview():
 
 # ============ HTTP Handler ============
 class Handler(SimpleHTTPRequestHandler):
+    # 单个连接读写超时: 防止"连接后不发数据"的僵死客户端永久占用处理线程
+    timeout = 30
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BASE_DIR, **kwargs)
 
@@ -1572,7 +1575,9 @@ if __name__ == "__main__":
 
     _t.Thread(target=_prewarm_and_refresh, daemon=True).start()
 
-    server = HTTPServer((HOST, PORT), Handler)
+    # 多线程: 请求在线程中处理, 单个慢/僵死连接不再阻塞 accept 队列卡死整个服务
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    server.daemon_threads = True
     print("科技内参行情代理已启动: http://{}:{}".format(HOST, PORT))
     try:
         server.serve_forever()
